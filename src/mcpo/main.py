@@ -28,11 +28,16 @@ from mcpo.utils.config_watcher import ConfigWatcher
 from mcpo.utils.headers import validate_client_header_forwarding_config
 from mcpo.utils.oauth import create_oauth_provider
 
+from pydantic import BaseModel
+
 
 logger = logging.getLogger(__name__)
 
 CONNECTION_TIMEOUT = os.getenv("CONNECTION_TIMEOUT", None)
 
+class McpLists(BaseModel):
+    mcp_servers: list[str]
+    version: int
 
 class GracefulShutdown:
     def __init__(self):
@@ -332,6 +337,7 @@ async def reload_config_handler(main_app: FastAPI, new_config_data: Dict[str, An
 
         # Update stored config data only after successful reload
         main_app.state.config_data = new_config_data
+        main_app.state.config_version = main_app.state.config_version + 1
         logger.info("Config reload completed successfully")
 
     except Exception as e:
@@ -739,6 +745,20 @@ async def run(
         main_app.state.connection_timeout = connection_timeout
         main_app.state.lifespan = lifespan
         main_app.state.path_prefix = path_prefix
+        main_app.state.config_version = 1
+
+        def get_config_version():
+            return main_app.state.config_version
+
+        def get_mcp_list() -> McpLists:
+            mcps = main_app.state.config_data.get("mcpServers", {}).keys()
+            return McpLists(mcp_servers=list(mcps), version=main_app.state.config_version)
+
+        # Add endpoint to get config version
+        main_app.get("/version")(get_config_version)
+        main_app.get("/mcp_list")(get_mcp_list)
+
+        
     else:
         logger.error("MCPO server_command or config_path must be provided.")
         raise ValueError("You must provide either server_command or config.")
