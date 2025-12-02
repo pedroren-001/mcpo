@@ -1,0 +1,15 @@
+version: '3.9'
+
+services:
+  mcpo:
+    build: .
+    container_name: mcpo
+    command: [
+      "--config", "/app/config/config.json",
+      "--hot-reload"
+    ]
+    volumes:
+      - ./config:/app/config
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
