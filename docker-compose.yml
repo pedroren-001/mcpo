@@ -11,5 +11,5 @@ services:
     volumes:
       - ./config:/app/config
     ports:
-      - "8000:8000"
+      - "19821:8000"
     restart: unless-stopped
