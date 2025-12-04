@@ -11,5 +11,5 @@ services:
     volumes:
       - ./config:/app/config
     ports:
-      - "19821:8000"
+      - "${MCPO_PORT:-19821}:8000"
     restart: unless-stopped
