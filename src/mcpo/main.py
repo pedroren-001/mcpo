@@ -194,6 +194,8 @@ def create_sub_app(
     # Store OAuth configuration if present
     sub_app.state.oauth_config = server_cfg.get("oauth")
 
+    # 保存原始 server_name，用于热加载时匹配（因为 title 可能被 server_info.name 覆盖）
+    sub_app.state.server_name = server_name
 
     return sub_app
 
@@ -244,6 +246,13 @@ def unmount_servers(main_app: FastAPI, path_prefix: str, server_names: list):
                 logger.warning(f"Error cleaning up lifespan for {server_name}: {e}")
             finally:
                 del active_lifespans[server_name]
+
+        # 从 routes 中移除对应的 Mount 路由
+        main_app.router.routes = [
+            route for route in main_app.router.routes
+            if not (isinstance(route, Mount) and route.path == mount_path)
+        ]
+        logger.info(f"Unmounted server route: {mount_path}")
 
 
 async def reload_config_handler(main_app: FastAPI, new_config_data: Dict[str, Any]):
@@ -338,6 +347,38 @@ async def reload_config_handler(main_app: FastAPI, new_config_data: Dict[str, An
         # Update stored config data only after successful reload
         main_app.state.config_data = new_config_data
         main_app.state.config_version = main_app.state.config_version + 1
+
+        # 更新 main_app.description 中的 available tools 列表
+        base_description = getattr(main_app.state, "base_description", main_app.description)
+        # 收集当前已连接的服务器（使用 server_name 而不是 title，因为 title 可能被覆盖）
+        connected_servers = []
+        logger.debug(f"Collecting connected servers from {len(main_app.router.routes)} routes")
+        for route in main_app.router.routes:
+            if isinstance(route, Mount) and isinstance(route.app, FastAPI):
+                sub_app = route.app
+                is_connected = getattr(sub_app.state, "is_connected", False)
+                server_name = getattr(sub_app.state, "server_name", None)
+                logger.debug(f"Route {route.path}: server_name={server_name}, is_connected={is_connected}")
+                if is_connected:
+                    # 使用保存的 server_name，回退到 route.path 提取
+                    if not server_name:
+                        # 从 route.path 提取 server_name（去掉 path_prefix）
+                        server_name = route.path.lstrip("/")
+                    connected_servers.append(server_name)
+        logger.debug(f"Connected servers: {connected_servers}")
+
+        # 重建 description
+        new_description = base_description
+        if connected_servers:
+            new_description += "\n\n- **available tools**："
+            for name in connected_servers:
+                docs_path = urljoin(path_prefix, f"{name}/docs")
+                new_description += f"\n    - [{name}]({docs_path})"
+        main_app.description = new_description
+
+        # 清除 OpenAPI schema 缓存，让 /docs 页面能看到更新后的 description
+        main_app.openapi_schema = None
+
         logger.info("Config reload completed successfully")
 
     except Exception as e:
@@ -738,6 +779,7 @@ async def run(
         # Store config info and app state for hot reload
         main_app.state.config_path = config_path
         main_app.state.config_data = config_data
+        main_app.state.base_description = description  # 保存原始 description 用于热加载时重建
         main_app.state.cors_allow_origins = cors_allow_origins
         main_app.state.api_key = api_key
         main_app.state.strict_auth = strict_auth
